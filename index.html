@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Markdown Editor</title>
+<script src="lib/marked.umd.js"></script>
+<script src="lib/purify.min.js"></script>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1f2328;
+    --muted: #656d76;
+    --border: #d0d7de;
+    --toolbar-bg: #f6f8fa;
+    --btn-bg: #ffffff;
+    --btn-hover: #eef1f4;
+    --btn-disabled: #f0f0f0;
+    --code-bg: #f6f8fa;
+    --accent: #0969da;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --fg: #e6edf3;
+      --muted: #8b949e;
+      --border: #30363d;
+      --toolbar-bg: #161b22;
+      --btn-bg: #21262d;
+      --btn-hover: #30363d;
+      --btn-disabled: #161b22;
+      --code-bg: #161b22;
+      --accent: #2f81f7;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100vh;
+    font-family: -apple-system, "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif;
+    background: var(--bg); color: var(--fg);
+  }
+  body { display: flex; flex-direction: column; }
+  #toolbar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 10px;
+    background: var(--toolbar-bg);
+    border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+  }
+  #toolbar button {
+    background: var(--btn-bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 12px; font-size: 13px; cursor: pointer;
+  }
+  #toolbar button:hover:not(:disabled) { background: var(--btn-hover); }
+  #toolbar button:disabled { background: var(--btn-disabled); color: var(--muted); cursor: not-allowed; }
+  #filename { margin-left: auto; font-size: 12px; color: var(--muted); }
+  #panes { display: flex; flex: 1 1 auto; min-height: 0; }
+  #editor, #preview { flex: 1 1 50%; min-width: 0; overflow: auto; }
+  body.view-mode #editor { display: none; }
+  body.view-mode #preview { flex: 1 1 100%; }
+  #editor {
+    border: none; outline: none; resize: none;
+    padding: 14px 16px;
+    font-family: "Cascadia Code", "Consolas", "Yu Gothic UI", monospace;
+    font-size: 14px; line-height: 1.55;
+    background: var(--bg); color: var(--fg);
+    border-right: 1px solid var(--border);
+    tab-size: 4;
+  }
+  #preview { padding: 14px 20px; line-height: 1.6; }
+  #preview h1, #preview h2 { border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+  #preview code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }
+  #preview pre { background: var(--code-bg); padding: 12px; border-radius: 6px; overflow: auto; }
+  #preview pre code { background: none; padding: 0; }
+  #preview blockquote { margin: 0; padding: 0 12px; color: var(--muted); border-left: 3px solid var(--border); }
+  #preview table { border-collapse: collapse; }
+  #preview th, #preview td { border: 1px solid var(--border); padding: 4px 10px; }
+  #preview a { color: var(--accent); }
+  #preview img { max-width: 100%; }
+  #banner {
+    display: none;
+    background: #fff3cd; color: #664d03;
+    padding: 6px 12px; font-size: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+  <div id="toolbar">
+    <button id="btn-open">Open</button>
+    <button id="btn-save">Save</button>
+    <button id="btn-save-as">Save As</button>
+    <button id="btn-mode" title="Ctrl+E">View</button>
+    <span id="filename">(untitled)</span>
+  </div>
+  <div id="banner">
+    File System Access API 非対応のブラウザです。Edge または Chrome で開いてください。
+  </div>
+  <div id="panes">
+    <textarea id="editor" spellcheck="false" placeholder="# Hello&#10;&#10;Type Markdown here..."></textarea>
+    <div id="preview"></div>
+  </div>
+
+<script>
+(() => {
+  const editor   = document.getElementById('editor');
+  const preview  = document.getElementById('preview');
+  const filename = document.getElementById('filename');
+  const banner   = document.getElementById('banner');
+  const btnOpen   = document.getElementById('btn-open');
+  const btnSave   = document.getElementById('btn-save');
+  const btnSaveAs = document.getElementById('btn-save-as');
+  const btnMode   = document.getElementById('btn-mode');
+
+  const fsaSupported = 'showOpenFilePicker' in window;
+  if (!fsaSupported) {
+    banner.style.display = 'block';
+    btnOpen.disabled = true;
+    btnSave.disabled = true;
+    btnSaveAs.disabled = true;
+  }
+
+  marked.use({ gfm: true, breaks: false });
+
+  let fileHandle = null;
+  let currentName = null;
+  let dirty = false;
+  let renderQueued = false;
+
+  function renderPreview() {
+    if (renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(() => {
+      renderQueued = false;
+      const rawHtml = marked.parse(editor.value);
+      preview.innerHTML = DOMPurify.sanitize(rawHtml, {
+        FORBID_TAGS: ['style', 'iframe', 'object', 'embed', 'form'],
+        FORBID_ATTR: ['style']
+      });
+    });
+  }
+
+  function updateTitle() {
+    const name = currentName || '(untitled)';
+    filename.textContent = (dirty ? '* ' : '') + name;
+    document.title = (dirty ? '* ' : '') + name + ' - Markdown Editor';
+  }
+
+  function setDirty(v) {
+    if (dirty === v) return;
+    dirty = v;
+    updateTitle();
+  }
+
+  editor.addEventListener('input', () => {
+    setDirty(true);
+    renderPreview();
+  });
+
+  async function openFile() {
+    try {
+      const [h] = await window.showOpenFilePicker({
+        types: [{
+          description: 'Markdown',
+          accept: { 'text/markdown': ['.md', '.markdown', '.mdown', '.txt'] }
+        }]
+      });
+      const file = await h.getFile();
+      editor.value = await file.text();
+      fileHandle = h;
+      currentName = file.name;
+      setDirty(false);
+      updateTitle();
+      renderPreview();
+    } catch (e) {
+      if (e.name !== 'AbortError') console.error(e);
+    }
+  }
+
+  async function writeTo(handle) {
+    const writable = await handle.createWritable();
+    await writable.write(editor.value);
+    await writable.close();
+  }
+
+  async function saveFile() {
+    try {
+      if (!fileHandle) return saveFileAs();
+      await writeTo(fileHandle);
+      setDirty(false);
+    } catch (e) {
+      if (e.name !== 'AbortError') console.error(e);
+    }
+  }
+
+  async function saveFileAs() {
+    try {
+      const h = await window.showSaveFilePicker({
+        suggestedName: currentName || 'untitled.md',
+        types: [{
+          description: 'Markdown',
+          accept: { 'text/markdown': ['.md'] }
+        }]
+      });
+      await writeTo(h);
+      fileHandle = h;
+      currentName = h.name;
+      setDirty(false);
+      updateTitle();
+    } catch (e) {
+      if (e.name !== 'AbortError') console.error(e);
+    }
+  }
+
+  function toggleMode() {
+    const viewing = document.body.classList.toggle('view-mode');
+    btnMode.textContent = viewing ? 'Edit' : 'View';
+  }
+
+  btnOpen.addEventListener('click',   openFile);
+  btnSave.addEventListener('click',   saveFile);
+  btnSaveAs.addEventListener('click', saveFileAs);
+  btnMode.addEventListener('click',   toggleMode);
+
+  document.addEventListener('keydown', (e) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    const k = e.key.toLowerCase();
+    if (k === 's') {
+      e.preventDefault();
+      if (e.shiftKey) saveFileAs(); else saveFile();
+    } else if (k === 'o') {
+      e.preventDefault();
+      openFile();
+    } else if (k === 'e') {
+      e.preventDefault();
+      toggleMode();
+    }
+  });
+
+  window.addEventListener('beforeunload', (e) => {
+    if (dirty) { e.preventDefault(); e.returnValue = ''; }
+  });
+
+  updateTitle();
+  renderPreview();
+})();
+</script>
+</body>
+</html>
