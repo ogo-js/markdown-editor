@@ -85,6 +85,26 @@
     padding: 6px 12px; font-size: 12px;
     border-bottom: 1px solid var(--border);
   }
+  body.drag-over #panes { outline: 3px dashed var(--accent); outline-offset: -6px; }
+  dialog {
+    background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 18px 22px; max-width: 520px; width: 90%;
+  }
+  dialog::backdrop { background: rgba(0,0,0,0.45); }
+  dialog h2 { margin: 0 0 12px; font-size: 16px; }
+  dialog table.shortcuts { width: 100%; border-collapse: collapse; font-size: 13px; }
+  dialog table.shortcuts td { padding: 5px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  dialog table.shortcuts td:first-child { white-space: nowrap; width: 1%; }
+  dialog kbd {
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: 4px;
+    padding: 1px 6px; font-family: inherit; font-size: 12px;
+  }
+  dialog .close-row { text-align: right; margin-top: 14px; }
+  dialog button { background: var(--btn-bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 4px 14px; font-size: 13px; cursor: pointer; }
+  dialog button:hover { background: var(--btn-hover); }
 </style>
 </head>
 <body>
@@ -93,8 +113,33 @@
     <button id="btn-save">Save</button>
     <button id="btn-save-as">Save As</button>
     <button id="btn-mode" title="Ctrl+E">View</button>
+    <button id="btn-help" title="F1 / ?">?</button>
     <span id="filename">(untitled)</span>
   </div>
+  <dialog id="help-dialog">
+    <h2>キーボードショートカット</h2>
+    <table class="shortcuts">
+      <tr><td><kbd>Ctrl</kbd>+<kbd>O</kbd></td><td>ファイルを開く</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>上書き保存</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></td><td>名前を付けて保存</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td><td>編集 / 閲覧モード切替</td></tr>
+      <tr><td colspan="2" style="padding-top:10px;color:var(--muted);font-size:12px;">— 書式 —</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>B</kbd></td><td>選択を <code>**太字**</code> に</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>I</kbd></td><td>選択を <code>*斜体*</code> に</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>選択を <code>[text](url)</code> に</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>`</kbd></td><td>選択を <code>`code`</code> に</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd></td><td>選択を <code>~~取消線~~</code> に</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd></td><td>コードブロックを挿入</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Q</kbd></td><td>選択行を引用 <code>&gt; </code></td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd></td><td>選択行をリスト <code>- </code></td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></td><td>空のテーブルを挿入</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>リスト / 引用を継続</td></tr>
+      <tr><td colspan="2" style="padding-top:10px;color:var(--muted);font-size:12px;">— その他 —</td></tr>
+      <tr><td><kbd>F1</kbd> / <kbd>?</kbd></td><td>このヘルプを表示</td></tr>
+      <tr><td>ドラッグ&amp;ドロップ</td><td>.md ファイルを開く</td></tr>
+    </table>
+    <div class="close-row"><button id="help-close">閉じる</button></div>
+  </dialog>
   <div id="banner">
     File System Access API 非対応のブラウザです。Edge または Chrome で開いてください。
   </div>
@@ -113,6 +158,9 @@
   const btnSave   = document.getElementById('btn-save');
   const btnSaveAs = document.getElementById('btn-save-as');
   const btnMode   = document.getElementById('btn-mode');
+  const btnHelp   = document.getElementById('btn-help');
+  const helpDlg   = document.getElementById('help-dialog');
+  const helpClose = document.getElementById('help-close');
 
   const fsaSupported = 'showOpenFilePicker' in window;
   if (!fsaSupported) {
@@ -219,23 +267,158 @@
     btnMode.textContent = viewing ? 'Edit' : 'View';
   }
 
+  function insertText(text, selStart, selEnd) {
+    editor.focus();
+    const ok = document.execCommand && document.execCommand('insertText', false, text);
+    if (!ok) {
+      const s = editor.selectionStart, e = editor.selectionEnd;
+      editor.value = editor.value.slice(0, s) + text + editor.value.slice(e);
+      editor.setSelectionRange(s + text.length, s + text.length);
+    }
+    if (selStart != null) editor.setSelectionRange(selStart, selEnd ?? selStart);
+    setDirty(true);
+    renderPreview();
+  }
+
+  function wrapSelection(before, after, placeholder = '') {
+    const s = editor.selectionStart, e = editor.selectionEnd;
+    const sel = editor.value.slice(s, e);
+    const inner = sel || placeholder;
+    insertText(before + inner + after, s + before.length, s + before.length + inner.length);
+  }
+
+  function prefixLines(prefix) {
+    const s = editor.selectionStart, e = editor.selectionEnd;
+    const v = editor.value;
+    const lineStart = v.lastIndexOf('\n', s - 1) + 1;
+    let lineEnd = v.indexOf('\n', e);
+    if (lineEnd === -1) lineEnd = v.length;
+    const block = v.slice(lineStart, lineEnd);
+    const prefixed = block.split('\n').map(l => prefix + l).join('\n');
+    editor.setSelectionRange(lineStart, lineEnd);
+    insertText(prefixed, lineStart, lineStart + prefixed.length);
+  }
+
+  function insertTable() {
+    const tmpl = '\n| 列1 | 列2 | 列3 |\n| --- | --- | --- |\n| a | b | c |\n| d | e | f |\n\n';
+    insertText(tmpl);
+  }
+
+  function insertCodeBlock() {
+    const s = editor.selectionStart, e = editor.selectionEnd;
+    const sel = editor.value.slice(s, e);
+    if (sel) {
+      insertText('```\n' + sel + '\n```\n');
+    } else {
+      const payload = '```\n\n```\n';
+      insertText(payload, s + 4, s + 4);
+    }
+  }
+
+  function continueList() {
+    const s = editor.selectionStart;
+    const v = editor.value;
+    const lineStart = v.lastIndexOf('\n', s - 1) + 1;
+    const curLine = v.slice(lineStart, s);
+    const m = curLine.match(/^(\s*)([-*+]\s+|\d+\.\s+|>\s+)/);
+    if (!m) { insertText('\n'); return; }
+    if (curLine.trim() === m[0].trim()) {
+      editor.setSelectionRange(lineStart, s);
+      insertText('\n');
+    } else {
+      let marker = m[0];
+      const num = marker.match(/^(\s*)(\d+)\.\s+$/);
+      if (num) marker = num[1] + (parseInt(num[2], 10) + 1) + '. ';
+      insertText('\n' + marker);
+    }
+  }
+
+  function openHelp() {
+    if (!helpDlg.open) helpDlg.showModal();
+  }
+
   btnOpen.addEventListener('click',   openFile);
   btnSave.addEventListener('click',   saveFile);
   btnSaveAs.addEventListener('click', saveFileAs);
   btnMode.addEventListener('click',   toggleMode);
+  btnHelp.addEventListener('click',   openHelp);
+  helpClose.addEventListener('click', () => helpDlg.close());
 
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'F1' || (e.key === '?' && !e.ctrlKey && !e.metaKey && document.activeElement !== editor)) {
+      e.preventDefault();
+      openHelp();
+      return;
+    }
     if (!e.ctrlKey && !e.metaKey) return;
     const k = e.key.toLowerCase();
-    if (k === 's') {
-      e.preventDefault();
-      if (e.shiftKey) saveFileAs(); else saveFile();
-    } else if (k === 'o') {
-      e.preventDefault();
-      openFile();
-    } else if (k === 'e') {
-      e.preventDefault();
-      toggleMode();
+    const shift = e.shiftKey;
+
+    if (k === 's') { e.preventDefault(); shift ? saveFileAs() : saveFile(); return; }
+    if (k === 'o') { e.preventDefault(); openFile(); return; }
+    if (k === 'e') { e.preventDefault(); toggleMode(); return; }
+
+    if (document.activeElement !== editor) return;
+
+    if (k === 'b' && !shift)        { e.preventDefault(); wrapSelection('**', '**', 'bold'); }
+    else if (k === 'i' && !shift)   { e.preventDefault(); wrapSelection('*', '*', 'italic'); }
+    else if (k === 'k' && !shift)   { e.preventDefault(); wrapSelection('[', '](url)', 'text'); }
+    else if (k === '`' && !shift)   { e.preventDefault(); wrapSelection('`', '`', 'code'); }
+    else if (k === 'k' && shift)    { e.preventDefault(); wrapSelection('~~', '~~', 'strike'); }
+    else if (k === 'c' && shift)    { e.preventDefault(); insertCodeBlock(); }
+    else if (k === 'q' && shift)    { e.preventDefault(); prefixLines('> '); }
+    else if (k === 'l' && shift)    { e.preventDefault(); prefixLines('- '); }
+    else if (k === 't' && shift)    { e.preventDefault(); insertTable(); }
+    else if (k === 'enter')         { e.preventDefault(); continueList(); }
+  });
+
+  async function loadFromHandle(h) {
+    const file = await h.getFile();
+    if (dirty && !confirm('未保存の変更があります。破棄して開き直しますか？')) return;
+    editor.value = await file.text();
+    fileHandle = h;
+    currentName = file.name;
+    setDirty(false);
+    updateTitle();
+    renderPreview();
+  }
+
+  async function loadFromFile(file) {
+    if (dirty && !confirm('未保存の変更があります。破棄して開き直しますか？')) return;
+    editor.value = await file.text();
+    fileHandle = null;
+    currentName = file.name;
+    setDirty(false);
+    updateTitle();
+    renderPreview();
+  }
+
+  document.addEventListener('dragover', (e) => {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    document.body.classList.add('drag-over');
+  });
+  document.addEventListener('dragleave', (e) => {
+    if (e.target === document.documentElement || e.relatedTarget === null) {
+      document.body.classList.remove('drag-over');
+    }
+  });
+  document.addEventListener('drop', async (e) => {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    document.body.classList.remove('drag-over');
+    const item = e.dataTransfer.items?.[0];
+    if (!item) return;
+    try {
+      if (item.getAsFileSystemHandle) {
+        const h = await item.getAsFileSystemHandle();
+        if (h?.kind === 'file') { await loadFromHandle(h); return; }
+      }
+      const f = item.getAsFile();
+      if (f) await loadFromFile(f);
+    } catch (err) {
+      console.error(err);
     }
   });
 
