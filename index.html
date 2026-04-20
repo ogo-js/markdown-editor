@@ -86,6 +86,35 @@
     border-bottom: 1px solid var(--border);
   }
   body.drag-over #panes { outline: 3px dashed var(--accent); outline-offset: -6px; }
+  #sidebar {
+    display: none; flex: 0 0 220px; flex-direction: column;
+    border-right: 1px solid var(--border); font-size: 13px; user-select: none;
+  }
+  body.sidebar-open #sidebar { display: flex; }
+  #sidebar-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 8px; border-bottom: 1px solid var(--border);
+    font-size: 12px; color: var(--muted); flex: 0 0 auto;
+  }
+  #sidebar-header button {
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    font-size: 14px; padding: 0 4px;
+  }
+  #sidebar-header button:hover { color: var(--fg); }
+  #sidebar-tree { flex: 1; overflow: auto; padding: 4px 0; }
+  #sidebar-tree ul { list-style: none; margin: 0; padding-left: 14px; }
+  #sidebar-tree > ul { padding-left: 4px; }
+  #sidebar-tree li { cursor: pointer; }
+  #sidebar-tree li > .tree-label {
+    display: block; padding: 2px 8px; border-radius: 4px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #sidebar-tree li > .tree-label:hover { background: var(--btn-hover); }
+  #sidebar-tree li.active > .tree-label { background: var(--accent); color: #fff; }
+  #sidebar-tree li.folder > .tree-label::before { content: '\25B6\0020'; font-size: 10px; }
+  #sidebar-tree li.folder.open > .tree-label::before { content: '\25BC\0020'; }
+  #sidebar-tree li.folder:not(.open) > ul { display: none; }
+  #sidebar-tree li.file > .tree-label::before { content: '\00A0\00A0\00A0'; }
   dialog {
     background: var(--bg); color: var(--fg);
     border: 1px solid var(--border); border-radius: 8px;
@@ -109,6 +138,7 @@
 </head>
 <body>
   <div id="toolbar">
+    <button id="btn-folder" title="Ctrl+Shift+O">Folder</button>
     <button id="btn-open">Open</button>
     <button id="btn-save">Save</button>
     <button id="btn-save-as">Save As</button>
@@ -135,6 +165,7 @@
       <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></td><td>空のテーブルを挿入</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>リスト / 引用を継続</td></tr>
       <tr><td colspan="2" style="padding-top:10px;color:var(--muted);font-size:12px;">— その他 —</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></td><td>フォルダを開く (サイドバー)</td></tr>
       <tr><td><kbd>F1</kbd> / <kbd>?</kbd></td><td>このヘルプを表示</td></tr>
       <tr><td>ドラッグ&amp;ドロップ</td><td>.md ファイルを開く</td></tr>
     </table>
@@ -144,6 +175,13 @@
     File System Access API 非対応のブラウザです。Edge または Chrome で開いてください。
   </div>
   <div id="panes">
+    <div id="sidebar">
+      <div id="sidebar-header">
+        <span id="sidebar-title">Explorer</span>
+        <button id="btn-refresh" title="更新">&#8635;</button>
+      </div>
+      <div id="sidebar-tree"></div>
+    </div>
     <textarea id="editor" spellcheck="false" placeholder="# Hello&#10;&#10;Type Markdown here..."></textarea>
     <div id="preview"></div>
   </div>
@@ -158,9 +196,13 @@
   const btnSave   = document.getElementById('btn-save');
   const btnSaveAs = document.getElementById('btn-save-as');
   const btnMode   = document.getElementById('btn-mode');
-  const btnHelp   = document.getElementById('btn-help');
-  const helpDlg   = document.getElementById('help-dialog');
-  const helpClose = document.getElementById('help-close');
+  const btnHelp    = document.getElementById('btn-help');
+  const helpDlg    = document.getElementById('help-dialog');
+  const helpClose  = document.getElementById('help-close');
+  const btnFolder  = document.getElementById('btn-folder');
+  const btnRefresh = document.getElementById('btn-refresh');
+  const sidebarTitle = document.getElementById('sidebar-title');
+  const sidebarTree  = document.getElementById('sidebar-tree');
 
   const fsaSupported = 'showOpenFilePicker' in window;
   if (!fsaSupported) {
@@ -168,6 +210,7 @@
     btnOpen.disabled = true;
     btnSave.disabled = true;
     btnSaveAs.disabled = true;
+    btnFolder.disabled = true;
   }
 
   marked.use({ gfm: true, breaks: false });
@@ -337,12 +380,87 @@
     if (!helpDlg.open) helpDlg.showModal();
   }
 
+  let dirHandle = null;
+  let treeData  = null;
+
+  async function openFolder() {
+    try {
+      dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+      sidebarTitle.textContent = dirHandle.name;
+      document.body.classList.add('sidebar-open');
+      await refreshTree();
+    } catch (e) {
+      if (e.name !== 'AbortError') console.error(e);
+    }
+  }
+
+  async function readTree(handle) {
+    const entries = [];
+    for await (const [name, h] of handle.entries()) {
+      if (name.startsWith('.')) continue;
+      const entry = { name, handle: h, kind: h.kind };
+      if (h.kind === 'directory') entry.children = [];
+      entries.push(entry);
+    }
+    entries.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    return entries;
+  }
+
+  async function expandFolder(entry) {
+    if (entry.children.length === 0) {
+      entry.children = await readTree(entry.handle);
+    }
+  }
+
+  function buildTree(entries, container) {
+    const ul = document.createElement('ul');
+    for (const entry of entries) {
+      const li = document.createElement('li');
+      li.className = entry.kind === 'directory' ? 'folder' : 'file';
+      const label = document.createElement('span');
+      label.className = 'tree-label';
+      label.textContent = entry.name;
+      li.appendChild(label);
+      if (entry.kind === 'directory') {
+        label.addEventListener('click', async () => {
+          if (!li.classList.contains('open')) {
+            await expandFolder(entry);
+            if (!li.querySelector('ul')) buildTree(entry.children, li);
+          }
+          li.classList.toggle('open');
+        });
+      } else {
+        label.addEventListener('click', () => openTreeFile(entry, li));
+      }
+      ul.appendChild(li);
+    }
+    container.appendChild(ul);
+  }
+
+  async function refreshTree() {
+    if (!dirHandle) return;
+    treeData = await readTree(dirHandle);
+    sidebarTree.innerHTML = '';
+    buildTree(treeData, sidebarTree);
+  }
+
+  async function openTreeFile(entry, li) {
+    await loadFromHandle(entry.handle);
+    sidebarTree.querySelectorAll('li.active').forEach(el => el.classList.remove('active'));
+    li.classList.add('active');
+  }
+
   btnOpen.addEventListener('click',   openFile);
   btnSave.addEventListener('click',   saveFile);
   btnSaveAs.addEventListener('click', saveFileAs);
   btnMode.addEventListener('click',   toggleMode);
   btnHelp.addEventListener('click',   openHelp);
   helpClose.addEventListener('click', () => helpDlg.close());
+  btnFolder.addEventListener('click',  openFolder);
+  btnRefresh.addEventListener('click', refreshTree);
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'F1' || (e.key === '?' && !e.ctrlKey && !e.metaKey && document.activeElement !== editor)) {
@@ -355,6 +473,7 @@
     const shift = e.shiftKey;
 
     if (k === 's') { e.preventDefault(); shift ? saveFileAs() : saveFile(); return; }
+    if (k === 'o' && shift) { e.preventDefault(); openFolder(); return; }
     if (k === 'o') { e.preventDefault(); openFile(); return; }
     if (k === 'e') { e.preventDefault(); toggleMode(); return; }
 
