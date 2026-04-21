@@ -43,11 +43,13 @@ google-chrome --app="file:///path/to/index.html"
 
 - 左ペインに Markdown を入力 → 右ペインにプレビューが即時反映
 - ツールバー:
-  - **Open** — ローカルの `.md` ファイルを開く
+  - **Folder** — フォルダを選択し、左サイドバーにツリー表示
+  - **Open** — ローカルの `.md` ファイル単体を開く
   - **Save / Save As** — 上書き保存 / 名前を付けて保存
   - **View / Edit** — エディタを隠してプレビュー全幅表示
   - **?** — ショートカット一覧を表示
 - `.md` ファイルをウィンドウへ **ドラッグ&ドロップ** しても開けます
+- **サイドバー (Explorer)** はフォルダを開くと左側に出現。フォルダ名クリックで展開/折りたたみ、ファイル名クリックでエディタに読み込み。`↻` ボタンでツリーを再読込 (外部でファイルを追加/削除した場合)
 
 ## キーボードショートカット
 
@@ -56,6 +58,7 @@ google-chrome --app="file:///path/to/index.html"
 | キー | 動作 |
 |---|---|
 | `Ctrl+O` | ファイルを開く |
+| `Ctrl+Shift+O` | フォルダを開く (サイドバー) |
 | `Ctrl+S` | 上書き保存 |
 | `Ctrl+Shift+S` | 名前を付けて保存 |
 | `Ctrl+E` | 編集 / 閲覧モード切替 |
@@ -98,7 +101,7 @@ markdown-editor/
   - `img-src 'self' data:` : 外部画像の自動取得を禁止 (トラッキング画像対策)
   - `frame-src / object-src 'none'` : `<iframe>` / プラグインを禁止
   - `form-action 'none'` : フォーム送信による情報漏洩を禁止
-- **DOMPurify** で `marked` の出力をサニタイズし、`<script>` や `onerror=` 等を除去
+- **DOMPurify** で `marked` の出力をサニタイズし、`<script>` や `onerror=` 等を除去。プレビュー内の外部リンクには `target="_blank" rel="noopener noreferrer"` を自動付与し、クリック時にアプリウィンドウが乗っ取られるのを防止
 - アプリコード内に `fetch` / `XMLHttpRequest` / `WebSocket` / `sendBeacon` / `eval` / `new Function` の呼び出しは **一切ありません**
 - 外部 CDN への依存なし（ライブラリは `lib/` に同梱）
 
