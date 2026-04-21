@@ -7,6 +7,7 @@
 <title>Markdown Editor</title>
 <script src="lib/marked.umd.js"></script>
 <script src="lib/purify.min.js"></script>
+<script src="lib/mermaid.min.js"></script>
 <style>
   :root {
     --bg: #ffffff;
@@ -115,6 +116,15 @@
   #sidebar-tree li.folder.open > .tree-label::before { content: '\25BC\0020'; }
   #sidebar-tree li.folder:not(.open) > ul { display: none; }
   #sidebar-tree li.file > .tree-label::before { content: '\00A0\00A0\00A0'; }
+  .mermaid-diagram { text-align: center; margin: 14px 0; }
+  .mermaid-diagram svg { max-width: 100%; height: auto; }
+  .mermaid-error {
+    color: #b91c1c; background: #fee2e2; padding: 10px; border-radius: 6px;
+    font-size: 12px; white-space: pre-wrap; border: 1px solid #fca5a5;
+  }
+  @media (prefers-color-scheme: dark) {
+    .mermaid-error { color: #fca5a5; background: #3b1e1e; border-color: #7f1d1d; }
+  }
   dialog {
     background: var(--bg); color: var(--fg);
     border: 1px solid var(--border); border-radius: 8px;
@@ -222,21 +232,58 @@
     }
   });
 
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'strict',
+    theme: prefersDark ? 'dark' : 'default',
+    fontFamily: 'inherit'
+  });
+
   let fileHandle = null;
   let currentName = null;
   let dirty = false;
   let renderQueued = false;
+  let renderVersion = 0;
+
+  async function renderMermaid(root, version) {
+    const blocks = root.querySelectorAll('pre > code.language-mermaid');
+    for (const code of blocks) {
+      if (version !== renderVersion || !code.isConnected) return;
+      const src = code.textContent;
+      const id = 'm' + Math.random().toString(36).slice(2, 10);
+      try {
+        const { svg } = await mermaid.render(id, src);
+        if (version !== renderVersion || !code.isConnected) return;
+        const wrap = document.createElement('div');
+        wrap.className = 'mermaid-diagram';
+        wrap.innerHTML = svg;
+        code.parentElement.replaceWith(wrap);
+      } catch (e) {
+        if (version !== renderVersion || !code.isConnected) return;
+        const err = document.createElement('pre');
+        err.className = 'mermaid-error';
+        err.textContent = 'Mermaid error: ' + (e?.message || e);
+        code.parentElement.replaceWith(err);
+      }
+    }
+  }
 
   function renderPreview() {
     if (renderQueued) return;
     renderQueued = true;
-    requestAnimationFrame(() => {
+    requestAnimationFrame(async () => {
       renderQueued = false;
+      const version = ++renderVersion;
       const rawHtml = marked.parse(editor.value);
-      preview.innerHTML = DOMPurify.sanitize(rawHtml, {
+      const clean = DOMPurify.sanitize(rawHtml, {
         FORBID_TAGS: ['style', 'iframe', 'object', 'embed', 'form'],
         FORBID_ATTR: ['style']
       });
+      if (version !== renderVersion) return;
+      preview.innerHTML = clean;
+      try { await renderMermaid(preview, version); }
+      catch (e) { console.error(e); }
     });
   }
 

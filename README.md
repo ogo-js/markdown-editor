@@ -12,6 +12,8 @@
 - **ドラッグ&ドロップ対応** — エクスプローラからファイルを落として開ける
 - **編集 / 閲覧モード切替** — プレビューのみの全幅表示にも切替可能
 - **書式ショートカット** — 太字・斜体・リスト・テーブル等の Markdown 書式を素早く挿入
+- **フォルダツリー** — サイドバーでフォルダを開き、ツリーからファイルをクリックで切替
+- **Mermaid ダイアグラム対応** — ` ```mermaid ``` ` コードブロックをフロー図・シーケンス図等へ自動レンダリング
 - **XSS / 通信防御** — Content Security Policy と DOMPurify により、信頼できない `.md` を開いても外部送信・スクリプト実行は発生しません
 
 ## 動作環境
@@ -82,7 +84,8 @@ markdown-editor/
 ├── start.cmd         Windows 用ランチャ (Edge → Chrome の順で探して --app 起動)
 ├── lib/
 │   ├── marked.umd.js  Markdown パーサ (marked v18.0.0 / MIT)
-│   └── purify.min.js  HTML サニタイザ (DOMPurify v3.4.0 / Apache-2.0 or MPL-2.0)
+│   ├── purify.min.js  HTML サニタイザ (DOMPurify v3.4.0 / Apache-2.0 or MPL-2.0)
+│   └── mermaid.min.js ダイアグラムレンダラ (mermaid v11.14.0 / MIT)
 └── README.md
 ```
 
@@ -109,6 +112,7 @@ markdown-editor/
 |---|---|---|---|
 | [marked](https://github.com/markedjs/marked) | 18.0.0 | MIT | Copyright (c) MarkedJS / Christopher Jeffrey |
 | [DOMPurify](https://github.com/cure53/DOMPurify) | 3.4.0 | Apache-2.0 OR MPL-2.0 | Copyright (c) Cure53 and contributors |
+| [mermaid](https://github.com/mermaid-js/mermaid) | 11.14.0 | MIT | Copyright (c) Knut Sveidqvist and contributors |
 
 ## ライセンス
 
